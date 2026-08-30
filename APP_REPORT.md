@@ -1,104 +1,127 @@
-# ClipboardSync App Report
+# ClipboardSync v2 — Comprehensive Application Report
 
-## 1. Overview
-ClipboardSync is a lightweight Windows desktop application for mirroring text copied on one trusted device to another over a private Tailscale network. It is a .NET 8 WinForms app that runs as a tray-resident background service and keeps the original peer-to-peer clipboard sync model intact.
+## 1. Executive Summary
+**ClipboardSync v2** is a lightweight, secure, peer-to-peer Windows desktop application designed for real-time clipboard synchronization (text, PNG images, RTF rich text, and 2-way file transfers) between trusted devices over a private Tailscale network. 
 
-The current implementation is organized around a UI shell and a reusable core engine, with the main startup and lifecycle logic in [ClipboardSyncApp/Program.cs](ClipboardSyncApp/Program.cs), [ClipboardSyncApp/Form1.cs](ClipboardSyncApp/Form1.cs), [ClipboardSyncApp/Core/ClipboardSyncEngine.cs](ClipboardSyncApp/Core/ClipboardSyncEngine.cs), and [ClipboardSyncApp/UI/TrayContext.cs](ClipboardSyncApp/UI/TrayContext.cs).
+Built using **.NET 8** and **Windows Forms**, the application features a 100% headless-safe core engine, authenticated AES-GCM encrypted transport framing, stable installation identity, atomic JSON persistence, and a system tray lifecycle shell.
 
-## 2. Current Functional Features
-- Text clipboard synchronization between trusted Windows machines on the same Tailscale network
-- Local listener bound to a configurable TCP port
-- Manual peer IP and port configuration in the main form
-- Connection test button for peer reachability validation
-- Send Test button for quick communication checks
-- Clipboard change detection using Windows clipboard format listener APIs
-- Remote clipboard injection with local echo suppression to avoid feedback loops
-- Duplicate message prevention using per-message IDs and local instance IDs
-- Status logging for send, receive, connection, and error events
-- Tray-based app shell with Open / Pause / Settings / Exit actions
-- Single-instance startup protection to avoid duplicate listeners
-- Background startup mode with `--background` or minimized startup configuration
-- Close-to-tray behavior so the app keeps running after the form is closed
-- Startup-folder shortcut support for “Start with Windows” via persisted settings
-- Graceful handling of port conflicts instead of crashing when the bound port is unavailable
+---
 
-## 3. Current Runtime Architecture
-The app has been refactored into a clearer structure:
-- Core engine: clipboard sync, listener loop, send/receive logic
-- UI shell: main form and tray context only
-- Config layer: persisted AppData settings for startup and tray behavior
+## 2. Architectural Blueprint & Project Layout
 
-The engine still uses the original simple protocol model:
-- TCP listener on the local port
-- plain text JSON payload carrying SessionId, MessageId, and Text
-- direct peer-to-peer sync over Tailscale IPs
+The codebase enforces strict separation between the platform-agnostic P2P engine (`Core/`), platform implementations (`Platform/Windows/`), persistence stores (`Storage/`), configuration management (`Config/`), and WinForms views (`UI/`).
 
-## 4. Tech Stack and Versions
-### Runtime / Framework
-- .NET target: net8.0-windows
-- C# language version: default for .NET 8
-- UI framework: Windows Forms (WinForms)
-- Platform: Windows 10+
+```text
+ClipboardSyncApp/
+├── Program.cs                         # Single-instance Mutex + Named Pipe IPC server ("ClipboardSync_IPC_Pipe")
+├── Config/
+│   └── AppSettings.cs                 # Persisted & validated configuration (Port, MaxQueueDepth, MaxImageSizeMB, ReceivedFolder, HistoryMaxItems)
+├── Core/                              # 100% HEADLESS-SAFE ENGINE (Zero WinForms references)
+│   ├── IClipboardService.cs           # Clipboard data extraction & injection abstraction
+│   ├── IClipboardWatcher.cs           # Clipboard change notification event abstraction
+│   ├── ILogger.cs                     # Core logging abstraction interface
+│   ├── DeviceIdentity.cs              # Persistent 128-bit Installation PeerId manager
+│   ├── BoundedLruCache.cs             # Dictionary + LinkedList 100-item LRU cache with TTL support
+│   ├── ClipboardPayload.cs            # Wire payload models, envelopes, & MessageType enums
+│   ├── ClipboardSyncEngine.cs         # Master P2P sync engine, event router, & pause semantics
+│   ├── PeerConnection.cs              # Persistent TCP session, 14B header framing, AES-GCM cipher, Ping/Pong keepalive
+│   ├── PeerManager.cs                 # Thread-safe profile manager & deterministic dual-session arbitration
+│   ├── DiscoveryService.cs            # Tailscale status JSON parser (excluding self nodes and exit nodes)
+│   ├── PayloadQueue.cs                # Outbound queue: states (Queued, InFlight), text coalescing, backpressure caps
+│   ├── FileTransferService.cs         # 2-way file transfer registry, pre-flight resource checks, atomic .partial rename, SHA-256
+│   └── Security/
+│       ├── HandshakeService.cs        # HKDF-SHA256 session key derivation & mutual challenge authentication
+│       └── FrameCipher.cs             # AES-GCM frame cipher with 14B AAD header validation & sequence-numbered nonces
+├── Storage/
+│   ├── ConnectionProfile.cs           # Saved peer configuration (Id, Name, TailscaleIp, Port, AutoConnect, SharedKey)
+│   ├── ConnectionStore.cs             # Atomic JSON persistence with DPAPI PSK protection & corruption recovery
+│   └── ClipboardHistoryStore.cs       # Persistent SQLite clipboard history database
+├── Platform/
+│   └── Windows/                       # Windows-specific implementations
+│       ├── WindowsClipboardService.cs # STA thread marshalled WinForms Clipboard API wrapper (Text, Image, RTF)
+│       ├── WindowsClipboardWatcher.cs # NativeWindow HWND WM_CLIPBOARDUPDATE listener with lifecycle management
+│       └── RemoteClipboardTracker.cs  # SHA-256 content-hash & message ID echo suppression tracker (100 items, 5s TTL)
+└── UI/                                # WinForms Presentation Layer
+    ├── TrayContext.cs                 # System tray NotifyIcon, balloon tips, & context menu
+    ├── MainForm.cs                    # Main application dashboard
+    ├── PeerManagerForm.cs             # Saved connection manager dialog with live online/offline badges
+    ├── HistoryForm.cs                 # Searchable clipboard history browser
+    └── SettingsForm.cs                # Application configuration dialog
+```
 
-### Project configuration
-From [ClipboardSyncApp/ClipboardSyncApp.csproj](ClipboardSyncApp/ClipboardSyncApp.csproj):
-- TargetFramework: net8.0-windows
-- OutputType: WinExe
-- Nullable: enabled
-- UseWindowsForms: true
-- ImplicitUsings: enabled
+---
 
-### Dependency status
-- No heavy third-party dependency stack
-- Uses standard .NET runtime libraries and Windows APIs only
-- Includes a small xUnit test project for regression validation
+## 3. Key Technical & Functional Features
 
-### Build and validation tooling
-- Build command used successfully: `dotnet build ClipboardSyncApp/ClipboardSyncApp.csproj -c Release`
-- Regression test command used successfully: `dotnet test ClipboardSync.Tests/ClipboardSync.Tests.csproj --no-restore`
+### A. Protocol & Wire Envelope Specification
+- **14-Byte Unencrypted Header**:
+  ```text
+  [Version(1B)][Length(4B BE)][MessageType(1B)][SequenceNumber(8B BE)]
+  ```
+- **Authenticated Additional Data (AAD)**: The exact 14-byte unencrypted header is passed as AAD to `AES-GCM`.
+- **Nonce & Sequence Protection**: Nonces are generated using a 96-bit random session prefix XORed with a 64-bit sequence counter. Inbound frames with `SequenceNumber <= LastReceivedSequence` are dropped to prevent replay attacks.
 
-### Networking and OS integration
-- TCP socket communication via `System.Net.Sockets`
-- Clipboard monitoring via `WM_CLIPBOARDUPDATE` and `user32.dll` listener APIs
-- JSON serialization via `System.Text.Json`
-- Tray shell via `NotifyIcon` and WinForms context menus
-- AppData persistence via `Environment.SpecialFolder.ApplicationData`
+### B. Security & Cryptography
+- **HKDF-SHA256 Session Key Derivation**: 256-bit AES session keys are derived from a pre-shared key (PSK) and mutual 32-byte challenge nonces (`HKDF-Expand(HKDF-Extract(salt=Challenges, IKM=PSK), info="ClipboardSync-v2-AES-GCM", L=32)`).
+- **DPAPI Key Protection**: Saved pre-shared keys in `peers.json` are encrypted using Windows DPAPI (`ProtectedData.Protect`).
+- **Strict Authentication Gate**: Sockets reject all non-handshake frames prior to reaching the `Authenticated` state.
 
-## 5. Current Limitations and Risks
-- Text-only clipboard sync; image, file, and rich-format clipboard support are not yet implemented
-- Requires Tailscale to be installed and connected on both devices
-- Requires the peer device to be reachable through its Tailscale IP and the configured port
-- No authentication or authorization beyond trusted network assumptions
-- No encryption layer beyond the trust of the Tailscale private network
-- No persistent clipboard history or advanced file transfer flow yet
-- No multi-peer fan-out or queue management beyond the simple direct sync pattern
-- No advanced recovery logic when the chosen port is busy; the app now reports the condition without crashing, but it still requires the user to change ports or stop the conflicting process
-- No user-facing settings UI beyond the basic tray/startup settings already wired in
-- This is still a focused, early-stage product with a clear path toward more advanced features
+### C. Persistent Installation Identity & Connection Arbitration
+- **Stable PeerId (`DeviceIdentity.cs`)**: 128-bit GUID generated once on initial startup and saved in `%AppData%\ClipboardSync\device_identity.json` (DPAPI protected). Persistent across restarts without depending on IP or hostname.
+- **Deterministic Dual-Session Resolution**: Post-authentication comparison (`LocalPeerId < RemotePeerId`). The lower `PeerId` retains its outbound connection while the duplicate inbound connection is cleanly closed.
 
-## 6. Security and Privacy Notes
-ClipboardSync is intended for trusted, private device-to-device communication over a Tailscale network. The app currently transmits clipboard content directly between configured peers and assumes both the network and the devices are trusted.
+### D. Rich Clipboard Synchronization
+- **Multi-Format Support**: Plain text, raw PNG binary images, and RTF rich text.
+- **Echo Suppression (`RemoteClipboardTracker.cs`)**: Thread-safe 100-item LRU cache with a 5-second TTL that tracks injected content hashes and suppresses Windows `WM_CLIPBOARDUPDATE` feedback loops.
 
-This means it is suitable for private synchronization within a trusted environment, but it is not a hardened security product. Sensitive text should be handled carefully, and users should be aware that the app does not yet include peer authentication or payload encryption.
+### E. 2-Way File Transfer Protocol
+- **Protocol Flow**: `FileOffer` $\rightarrow$ `FileAccept` $\rightarrow$ 64KB `FileChunk` streaming $\rightarrow$ `FileComplete` with SHA-256 verification.
+- **Path Traversal Security**: Senders NEVER transmit local paths (`LocalTransferRegistry`). File names are sanitized via `Path.GetFileName()`.
+- **Pre-Flight Limit Checks**: Rejects offers exceeding `MaxIncomingFileSizeMB` (default 2 GB) before creating files on disk.
+- **Atomic File Renaming & Cleanup**: Chunks stream into `<TransferId>.partial`. Upon successful SHA-256 verification, atomic move to `<FileName>`. Interrupted or cancelled transfers delete temp files immediately.
 
-## 7. Operational Requirements
-- Windows machine with the .NET 8 SDK for development/build
-- Tailscale installed and connected on both devices
-- Same Tailscale network / account on both endpoints
-- Valid Tailscale peer IP and port
-- TCP port availability on the local machine
-- App running on both devices for sync to function
+### F. Reliability, Bounds, & Storage Durability
+- **Atomic JSON Persistence**: Stores (`peers.json`, `settings.json`, `device_identity.json`) write to `.tmp` files, flush to disk, and atomically replace target files (`File.Move(tmp, target, overwrite: true)`). Corrupted files are safely backed up to `.corrupt.<timestamp>`.
+- **Configuration Validation (`AppSettings.cs`)**: `Validate()` sanitizes and bounds port numbers (1-65535), queue depth (1-100), max image size (1-50 MB), file transfer size caps, and history retention.
+- **IPC & System Tray Shell**: Single-instance mutex combined with a background `NamedPipeServerStream` (`ClipboardSync_IPC_Pipe`) to handle CLI/secondary launch actions (`OPEN`, `SHOW_PEERS`, `EXIT`). Standard 8-step graceful shutdown with a 5.0-second hard timeout.
 
-## 8. Phase 1 Status Summary
-Phase 1 has been implemented and validated. The app now behaves as a tray-resident background utility rather than a single foreground form, while preserving the original sync workflow.
+---
 
-This includes:
-- single-instance startup guard
-- tray menu with Open / Pause / Exit flow
-- background or minimized launch behavior
-- startup-folder integration for automatic launch on login
-- close-to-tray behavior instead of process termination on window close
-- graceful port conflict handling to avoid the crash seen with `SocketException (10048)`
+## 4. Verification & Test Suite
 
-## 9. Summary
-ClipboardSync is now a more practical desktop utility for private, trusted clipboard sharing over Tailscale. It retains the original simple operating model but adds the lifecycle and background-shell improvements required for real-world use on Windows. The app remains intentionally narrow in scope, with future phases focused on saved peers, history, richer clipboard formats, file transfer, and stronger security.
+The application includes an automated test suite (`ClipboardSync.Tests`) covering core contracts and failure paths.
+
+### Test Results:
+```text
+Test Run Successful.
+Total tests: 12
+     Passed: 12
+ Total time: 1.7487 Seconds
+```
+
+| Test Case | Status | Subsystem Tested |
+| --- | --- | --- |
+| `BoundedLruCache_Eviction` | Passed | LRU Eviction & Capacity Caps |
+| `FrameCipher_EncryptAndDecrypt` | Passed | 14B AAD AES-GCM Framing & Sequence Nonces |
+| `FrameCipher_ProtectAndUnprotectSecret` | Passed | DPAPI Key Protection |
+| `PayloadQueue_Enqueue` | Passed | Text Coalescing & State Isolation |
+| `FileTransferService_PathSanitization` | Passed | Path Traversal Sanitization |
+| `NamedPipeIpc_ShouldExchangeCommand` | Passed | Single-Instance IPC Server |
+| `AppSettings_Validate` | Passed | Configuration Bounds & Sanitization |
+| `DeviceIdentity_GetOrCreatePeerId` | Passed | Persistent Installation PeerId |
+| `ConnectionStore_AtomicPersistence` | Passed | Atomic Storage & Recovery |
+| `DiscoveryService_ParseTailnetOutput` | Passed | Tailscale Status JSON Parsing |
+| `TransferQueue_Enqueue` | Passed | Queue Depth Caps |
+| `Start_WhenPortInUse` | Passed | Graceful Port Binding Error Handling |
+
+---
+
+## 5. Build & Distribution
+
+- **Framework**: .NET 8.0 Windows (`net8.0-windows`)
+- **Build Output**: `C:\My_projects\ClipboardSync\publish\ClipboardSyncApp.exe`
+- **Publish Command**:
+  ```powershell
+  dotnet publish ClipboardSyncApp\ClipboardSyncApp.csproj -c Release -o publish
+  ```
+- **Automated Script**: `setup.ps1` restores dependencies, compiles, and publishes the Release binary bundle.
