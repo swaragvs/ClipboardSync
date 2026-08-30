@@ -195,10 +195,13 @@ public sealed class ClipboardSyncEngine : IDisposable
             var text = _clipboardService.GetText();
             if (!string.IsNullOrWhiteSpace(text))
             {
-                if (_remoteTracker.IsEcho(MessageType.ClipboardText, Encoding.UTF8.GetBytes(text)))
+                var normText = RemoteClipboardTracker.NormalizeText(text);
+                var textBytes = Encoding.UTF8.GetBytes(normText);
+                if (_remoteTracker.IsEcho(MessageType.ClipboardText, textBytes))
                 {
                     return;
                 }
+                _remoteTracker.RecordSentLocal(MessageType.ClipboardText, textBytes);
                 _ = SendTextAsync(text);
                 return;
             }
@@ -213,6 +216,7 @@ public sealed class ClipboardSyncEngine : IDisposable
                 {
                     return;
                 }
+                _remoteTracker.RecordSentLocal(MessageType.ClipboardImage, bytes);
                 _ = SendImageAsync(bytes);
                 return;
             }
@@ -231,7 +235,9 @@ public sealed class ClipboardSyncEngine : IDisposable
             case MessageType.ClipboardText:
                 if (!string.IsNullOrWhiteSpace(payload.Text))
                 {
-                    _remoteTracker.RecordInjectedRemote(MessageType.ClipboardText, Encoding.UTF8.GetBytes(payload.Text), payload.MessageId);
+                    var normText = RemoteClipboardTracker.NormalizeText(payload.Text);
+                    var textBytes = Encoding.UTF8.GetBytes(normText);
+                    _remoteTracker.RecordInjectedRemote(MessageType.ClipboardText, textBytes, payload.MessageId);
                     _clipboardService?.SetText(payload.Text);
                     ClipboardTextReceived?.Invoke(this, payload.Text);
                     AppendStatus($"Received remote text ({payload.Text.Length} chars).");
@@ -251,6 +257,9 @@ public sealed class ClipboardSyncEngine : IDisposable
             case MessageType.ClipboardRtf:
                 if (!string.IsNullOrWhiteSpace(payload.RtfText))
                 {
+                    var normText = RemoteClipboardTracker.NormalizeText(payload.RtfText);
+                    var rtfBytes = Encoding.UTF8.GetBytes(normText);
+                    _remoteTracker.RecordInjectedRemote(MessageType.ClipboardRtf, rtfBytes, payload.MessageId);
                     _clipboardService?.SetRtf(payload.RtfText);
                     ClipboardRtfReceived?.Invoke(this, payload.RtfText);
                     AppendStatus("Received remote RTF text.");

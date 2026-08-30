@@ -34,19 +34,33 @@ public sealed class RemoteClipboardTracker
         }
     }
 
+    public void RecordSentLocal(MessageType type, byte[] dataBytes)
+    {
+        var hash = ComputeHash(dataBytes);
+        lock (_lock)
+        {
+            PruneStale();
+            _entries.Add(new TrackedEntry
+            {
+                ContentHash = hash,
+                MessageId = "LOCAL_SENT",
+                TimestampUtc = DateTime.UtcNow,
+                Type = type
+            });
+        }
+    }
+
     public bool IsEcho(MessageType type, byte[] dataBytes)
     {
         var hash = ComputeHash(dataBytes);
         lock (_lock)
         {
             PruneStale();
+            // Match any entry with the same content hash within the retention window.
+            // Do NOT remove the entry on first match, because Windows fires multiple WM_CLIPBOARDUPDATE
+            // messages asynchronously for a single Clipboard.SetText / SetDataObject call.
             var match = _entries.FirstOrDefault(e => e.Type == type && string.Equals(e.ContentHash, hash, StringComparison.Ordinal));
-            if (match != null)
-            {
-                _entries.Remove(match);
-                return true;
-            }
-            return false;
+            return match != null;
         }
     }
 
@@ -54,6 +68,15 @@ public sealed class RemoteClipboardTracker
     {
         var cutoff = DateTime.UtcNow - _retentionWindow;
         _entries.RemoveAll(e => e.TimestampUtc < cutoff);
+    }
+
+    public static string NormalizeText(string text)
+    {
+        if (string.IsNullOrEmpty(text))
+        {
+            return string.Empty;
+        }
+        return text.Replace("\r\n", "\n").Replace('\r', '\n').TrimEnd('\0');
     }
 
     public static string ComputeHash(byte[] bytes)
@@ -72,6 +95,6 @@ public sealed class RemoteClipboardTracker
         {
             return string.Empty;
         }
-        return ComputeHash(Encoding.UTF8.GetBytes(text));
+        return ComputeHash(Encoding.UTF8.GetBytes(NormalizeText(text)));
     }
 }

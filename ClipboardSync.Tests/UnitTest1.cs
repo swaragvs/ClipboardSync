@@ -178,4 +178,24 @@ public class FullArchitectureAndContractTests
         var reloaded = ConnectionStore.Load();
         Assert.DoesNotContain(reloaded, p => p.Id == profile.Id);
     }
+
+    [Fact]
+    public void RemoteClipboardTracker_EchoSuppression_ShouldSuppressMultipleAsyncEventsAndNormalizeText()
+    {
+        var tracker = new ClipboardSyncApp.Platform.Windows.RemoteClipboardTracker();
+        var originalText = "Hello World\nLine 2";
+        var windowsFormatText = "Hello World\r\nLine 2\0";
+
+        var normBytes1 = Encoding.UTF8.GetBytes(ClipboardSyncApp.Platform.Windows.RemoteClipboardTracker.NormalizeText(originalText));
+        var normBytes2 = Encoding.UTF8.GetBytes(ClipboardSyncApp.Platform.Windows.RemoteClipboardTracker.NormalizeText(windowsFormatText));
+
+        // Record injected remote content
+        tracker.RecordInjectedRemote(MessageType.ClipboardText, normBytes1, "msg-123");
+
+        // Windows fires FIRST WM_CLIPBOARDUPDATE event
+        Assert.True(tracker.IsEcho(MessageType.ClipboardText, normBytes2));
+
+        // Windows fires SECOND WM_CLIPBOARDUPDATE event 10ms later for the SAME content -> MUST STILL BE SUPPRESSED!
+        Assert.True(tracker.IsEcho(MessageType.ClipboardText, normBytes2));
+    }
 }
