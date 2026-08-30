@@ -12,9 +12,13 @@ A lightweight Windows application for synchronizing clipboard text between trust
 ## Requirements
 
 - Windows 10 or later
-- .NET 8
-- Tailscale installed and connected on the devices you want to use
-- Network connectivity between the devices through Tailscale
+- .NET 8 SDK installed on the development machine for building and running the app
+- Tailscale installed and connected on both devices
+- Both devices must be online and reachable through the same Tailscale network
+- A known peer Tailscale IP address for the target device (for example `100.x.x.x`)
+- A free TCP port on both devices for the sync listener (default: `5001`)
+- A trusted local setup; this project is intended for private device-to-device clipboard sharing only
+- Text clipboard use only in the current implementation; image and file clipboard sync are not included
 
 ## Getting Started
 Clone the repository and restore the project:
