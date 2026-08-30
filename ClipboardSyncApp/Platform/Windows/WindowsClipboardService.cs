@@ -1,21 +1,36 @@
+using System.Collections.Concurrent;
 using System.Drawing;
 using System.Drawing.Imaging;
+using System.Runtime.InteropServices;
 using ClipboardSyncApp.Core;
 
 namespace ClipboardSyncApp.Platform.Windows;
 
-public sealed class WindowsClipboardService : IClipboardService
+public sealed class WindowsClipboardService : IClipboardService, IDisposable
 {
-    private static readonly int[] RetryDelaysMs = new[] { 10, 25, 50, 100 };
+    private readonly BlockingCollection<Action> _workQueue = new();
+    private readonly Thread _staThread;
+    private readonly CancellationTokenSource _cts = new();
+
+    public WindowsClipboardService()
+    {
+        _staThread = new Thread(StaLoop)
+        {
+            IsBackground = true,
+            Name = "ClipboardSync_STA_Worker"
+        };
+        _staThread.SetApartmentState(ApartmentState.STA);
+        _staThread.Start();
+    }
 
     public bool HasText()
     {
-        return ExecuteWithRetry(() => Clipboard.ContainsText());
+        return InvokeOnSta(() => ExecuteWithRetry(() => Clipboard.ContainsText()));
     }
 
     public string GetText()
     {
-        return ExecuteWithRetry(() => Clipboard.ContainsText() ? Clipboard.GetText() : string.Empty) ?? string.Empty;
+        return InvokeOnSta(() => ExecuteWithRetry(() => Clipboard.ContainsText() ? Clipboard.GetText() : string.Empty)) ?? string.Empty;
     }
 
     public void SetText(string text)
@@ -25,17 +40,17 @@ public sealed class WindowsClipboardService : IClipboardService
             return;
         }
 
-        ExecuteWithRetry(() => Clipboard.SetText(text));
+        InvokeOnSta(() => ExecuteWithRetry(() => Clipboard.SetText(text)));
     }
 
     public bool HasImage()
     {
-        return ExecuteWithRetry(() => Clipboard.ContainsImage());
+        return InvokeOnSta(() => ExecuteWithRetry(() => Clipboard.ContainsImage()));
     }
 
     public byte[]? GetImageBytes()
     {
-        return ExecuteWithRetry(() =>
+        return InvokeOnSta(() => ExecuteWithRetry(() =>
         {
             var image = Clipboard.GetImage();
             if (image == null)
@@ -46,7 +61,7 @@ public sealed class WindowsClipboardService : IClipboardService
             using var ms = new MemoryStream();
             image.Save(ms, ImageFormat.Png);
             return ms.ToArray();
-        });
+        }));
     }
 
     public void SetImageBytes(byte[] pngBytes)
@@ -56,29 +71,29 @@ public sealed class WindowsClipboardService : IClipboardService
             return;
         }
 
-        ExecuteWithRetry(() =>
+        InvokeOnSta(() => ExecuteWithRetry(() =>
         {
             using var ms = new MemoryStream(pngBytes);
             using var image = Image.FromStream(ms);
             Clipboard.SetImage(image);
-        });
+        }));
     }
 
     public bool HasRtf()
     {
-        return ExecuteWithRetry(() => Clipboard.ContainsData(DataFormats.Rtf));
+        return InvokeOnSta(() => ExecuteWithRetry(() => Clipboard.ContainsData(DataFormats.Rtf)));
     }
 
     public string? GetRtf()
     {
-        return ExecuteWithRetry(() =>
+        return InvokeOnSta(() => ExecuteWithRetry(() =>
         {
             if (Clipboard.ContainsData(DataFormats.Rtf))
             {
                 return Clipboard.GetData(DataFormats.Rtf) as string;
             }
             return null;
-        });
+        }));
     }
 
     public void SetRtf(string rtfText)
@@ -88,56 +103,94 @@ public sealed class WindowsClipboardService : IClipboardService
             return;
         }
 
-        ExecuteWithRetry(() =>
+        InvokeOnSta(() => ExecuteWithRetry(() =>
         {
             var dataObj = new DataObject();
             dataObj.SetData(DataFormats.Rtf, rtfText);
-            dataObj.SetData(DataFormats.Text, rtfText); // Plain text fallback
+            dataObj.SetData(DataFormats.Text, rtfText);
             Clipboard.SetDataObject(dataObj, true);
+        }));
+    }
+
+    private T InvokeOnSta<T>(Func<T> action)
+    {
+        if (Thread.CurrentThread == _staThread)
+        {
+            return action();
+        }
+
+        if (_cts.IsCancellationRequested)
+        {
+            return default!;
+        }
+
+        var tcs = new TaskCompletionSource<T>();
+        _workQueue.Add(() =>
+        {
+            try
+            {
+                tcs.SetResult(action());
+            }
+            catch (Exception ex)
+            {
+                tcs.SetException(ex);
+            }
         });
+
+        return tcs.Task.GetAwaiter().GetResult();
+    }
+
+    private void InvokeOnSta(Action action)
+    {
+        InvokeOnSta<object?>(() =>
+        {
+            action();
+            return null;
+        });
+    }
+
+    private void StaLoop()
+    {
+        try
+        {
+            foreach (var action in _workQueue.GetConsumingEnumerable(_cts.Token))
+            {
+                try
+                {
+                    action();
+                }
+                catch
+                {
+                }
+            }
+        }
+        catch (OperationCanceledException)
+        {
+        }
     }
 
     private static T ExecuteWithRetry<T>(Func<T> action)
     {
-        for (int i = 0; i <= RetryDelaysMs.Length; i++)
+        const int maxRetries = 4;
+        const int delayMs = 30;
+
+        for (int i = 0; i <= maxRetries; i++)
         {
             try
             {
-                if (Thread.CurrentThread.GetApartmentState() == ApartmentState.STA)
+                return action();
+            }
+            catch (ExternalException)
+            {
+                if (i == maxRetries)
                 {
-                    return action();
+                    break;
                 }
-
-                T result = default!;
-                Exception? threadException = null;
-                var staThread = new Thread(() =>
-                {
-                    try
-                    {
-                        result = action();
-                    }
-                    catch (Exception ex)
-                    {
-                        threadException = ex;
-                    }
-                });
-
-                staThread.SetApartmentState(ApartmentState.STA);
-                staThread.Start();
-                staThread.Join();
-
-                if (threadException == null)
-                {
-                    return result;
-                }
+                Thread.Sleep(delayMs * (i + 1));
             }
             catch
             {
-            }
-
-            if (i < RetryDelaysMs.Length)
-            {
-                Thread.Sleep(RetryDelaysMs[i]);
+                break;
             }
         }
 
@@ -151,5 +204,12 @@ public sealed class WindowsClipboardService : IClipboardService
             action();
             return null;
         });
+    }
+
+    public void Dispose()
+    {
+        _cts.Cancel();
+        _workQueue.CompleteAdding();
+        _cts.Dispose();
     }
 }

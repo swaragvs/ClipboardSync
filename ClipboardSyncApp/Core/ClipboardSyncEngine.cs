@@ -183,6 +183,11 @@ public sealed class ClipboardSyncEngine : IDisposable
         return Task.CompletedTask;
     }
 
+    public void NotifyClipboardChanged()
+    {
+        OnLocalClipboardChanged(this, EventArgs.Empty);
+    }
+
     private void OnLocalClipboardChanged(object? sender, EventArgs e)
     {
         if (_clipboardService == null)
@@ -197,7 +202,7 @@ public sealed class ClipboardSyncEngine : IDisposable
             {
                 var normText = RemoteClipboardTracker.NormalizeText(text);
                 var textBytes = Encoding.UTF8.GetBytes(normText);
-                if (_remoteTracker.IsEcho(MessageType.ClipboardText, textBytes))
+                if (_remoteTracker.ShouldSuppressLocalChange(MessageType.ClipboardText, textBytes))
                 {
                     return;
                 }
@@ -212,7 +217,7 @@ public sealed class ClipboardSyncEngine : IDisposable
             var bytes = _clipboardService.GetImageBytes();
             if (bytes != null && bytes.Length > 0)
             {
-                if (_remoteTracker.IsEcho(MessageType.ClipboardImage, bytes))
+                if (_remoteTracker.ShouldSuppressLocalChange(MessageType.ClipboardImage, bytes))
                 {
                     return;
                 }

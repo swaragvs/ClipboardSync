@@ -51,44 +51,8 @@ public partial class MainForm : Form
         if (this.Handle != IntPtr.Zero)
         {
             _watcher = new WindowsClipboardWatcher(this.Handle);
-            _watcher.ClipboardChanged += OnNativeClipboardChanged;
+            _watcher.ClipboardChanged += (_, _) => _engine.NotifyClipboardChanged();
             _watcher.Register();
-        }
-    }
-
-    private void OnNativeClipboardChanged(object? sender, EventArgs e)
-    {
-        if (_clipboardService == null)
-        {
-            return;
-        }
-
-        if (_clipboardService.HasText())
-        {
-            var text = _clipboardService.GetText();
-            if (!string.IsNullOrWhiteSpace(text))
-            {
-                if (_engine.RemoteTracker.IsEcho(MessageType.ClipboardText, System.Text.Encoding.UTF8.GetBytes(text)))
-                {
-                    return;
-                }
-                _ = _engine.SendTextAsync(text);
-                return;
-            }
-        }
-
-        if (_clipboardService.HasImage())
-        {
-            var bytes = _clipboardService.GetImageBytes();
-            if (bytes != null && bytes.Length > 0)
-            {
-                if (_engine.RemoteTracker.IsEcho(MessageType.ClipboardImage, bytes))
-                {
-                    return;
-                }
-                _ = _engine.SendImageAsync(bytes);
-                return;
-            }
         }
     }
 
@@ -158,9 +122,20 @@ public partial class MainForm : Form
 
     private void AppendStatus(string message)
     {
+        if (IsDisposed || !IsHandleCreated)
+        {
+            return;
+        }
+
         if (InvokeRequired)
         {
-            BeginInvoke(new Action(() => AppendStatus(message)));
+            try
+            {
+                BeginInvoke(new Action(() => AppendStatus(message)));
+            }
+            catch
+            {
+            }
             return;
         }
 
