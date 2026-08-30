@@ -1,5 +1,4 @@
 name: Build & Release ClipboardSync
-
 on:
   push:
     branches: ["master"]
@@ -7,44 +6,36 @@ on:
   pull_request:
     branches: ["master"]
   workflow_dispatch:
-
 jobs:
   build:
     name: Build, Test & Package
     runs-on: windows-latest
-
+    permissions:
+      contents: write
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v4
-
       - name: Setup .NET 8 SDK
         uses: actions/setup-dotnet@v4
         with:
           dotnet-version: 8.0.x
-
       - name: Restore Dependencies
         run: |
           dotnet restore ClipboardSyncApp/ClipboardSyncApp.csproj
           dotnet restore ClipboardSync.Tests/ClipboardSync.Tests.csproj
-
       - name: Build ClipboardSyncApp (Release)
         run: dotnet build ClipboardSyncApp/ClipboardSyncApp.csproj --configuration Release --no-restore
-
       - name: Build Unit Tests (Release)
         run: dotnet build ClipboardSync.Tests/ClipboardSync.Tests.csproj --configuration Release --no-restore
-
       - name: Run Test Suite
         run: dotnet test ClipboardSync.Tests/ClipboardSync.Tests.csproj --configuration Release --no-build --logger "console;verbosity=normal"
-
       - name: Publish Application
         run: dotnet publish ClipboardSyncApp/ClipboardSyncApp.csproj --configuration Release --output ./publish
-
       - name: Upload Build Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: ClipboardSync-v2-win-x64
+          name: ClipboardSync-win-x64
           path: ./publish/*
-
       - name: Create GitHub Release (on tag)
         if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v2
