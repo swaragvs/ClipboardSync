@@ -1,74 +1,71 @@
 # ClipboardSync
+A lightweight Windows application for synchronizing clipboard text between trusted devices over a private Tailscale network.
 
-A lightweight Windows clipboard synchronization tool for securely sharing clipboard text between trusted devices over a Tailscale network.
+## Features
 
-## What it does
-
-- Watches the Windows clipboard for text changes
-- Sends new clipboard content to a configured peer IP over TCP
-- Receives clipboard updates from another machine
-- Prevents feedback loops by suppressing echo-back of the same message
-- Runs as a simple WinForms app with a status log
+- Synchronizes clipboard text between connected Windows devices
+- Uses direct device-to-device communication
+- Works over a Tailscale network
+- Lightweight Windows desktop application
+- Designed for simple, private device-to-device use
 
 ## Requirements
 
 - Windows 10 or later
-- .NET 8 SDK
-- Tailscale installed and connected on both machines
-- Both devices reachable over Tailscale (`100.x.x.x` addresses)
+- .NET 8
+- Tailscale installed and connected on the devices you want to use
+- Network connectivity between the devices through Tailscale
 
-## Project structure
+## Getting Started
+Clone the repository and restore the project:
 
-- `ClipboardSyncApp/` - Windows app source code
-- `.github/workflows/build.yml` - GitHub Actions CI workflow
+```
+dotnet restore ClipboardSyncApp/ClipboardSyncApp.csproj
+```
+Run the application:
 
-## Run locally
+```
+dotnet run --project ClipboardSyncApp/ClipboardSyncApp.csproj
+```
+Configure the peer device in the application and connect.
 
-1. Open a terminal in the project root.
-2. Restore dependencies:
+Once connected, clipboard text copied on one device can be synchronized to the other device.
 
-   ```powershell
-   dotnet restore ClipboardSyncApp/ClipboardSyncApp.csproj
-   ```
+## Build
+Build a Release version with:
 
-3. Run the app:
-
-   ```powershell
-   dotnet run --project ClipboardSyncApp/ClipboardSyncApp.csproj
-   ```
-
-4. In the UI:
-   - Enter the peer machine's Tailscale IP, for example `100.64.0.2`
-   - Keep the port as `5001` or change it if needed
-   - Click `Connect` to test the connection
-   - Copy text on one machine and it should appear on the other
-
-## Important notes
-
-- This is designed for a trusted local network over Tailscale.
-- The app currently supports plain text clipboard sync.
-- You should use a fixed peer IP and port for reliable communication.
-- The app uses a message ID to avoid infinite resend loops.
-
-## Build manually
-
-```powershell
+```
 dotnet build ClipboardSyncApp/ClipboardSyncApp.csproj -c Release
 ```
+To publish the application:
 
-## Publish manually
-
-```powershell
+```
 dotnet publish ClipboardSyncApp/ClipboardSyncApp.csproj -c Release -o ./publish
 ```
 
-## GitHub Actions
+## Privacy
+ClipboardSync is designed for direct communication between trusted devices over a private Tailscale network.
 
-The repository includes a CI workflow in `.github/workflows/build.yml` that restores, builds, and publishes the app on Windows.
+Clipboard content is transmitted between the configured devices for synchronization.
 
-## Security note
+Do not use ClipboardSync with sensitive clipboard information unless you understand and trust the network and devices involved.
 
-This app is intended for a private Tailscale mesh between trusted devices. It does not use a cloud service or external relay.
+## Project Status
+ClipboardSync is an independently developed project and is currently under active development.
+
+Features and implementation details may change as the project evolves.
+
+## Ownership & Usage
+Copyright © 2026 Swarag V S. All rights reserved.
+
+This repository is publicly available for viewing and reference.
+
+No license is granted to copy, modify, redistribute, sublicense, or commercially exploit the source code unless expressly permitted by the copyright holder.
+
+Tailscale is a separate product and trademark of its respective owner. ClipboardSync is not affiliated with or endorsed by Tailscale.
+
+## Disclaimer
+ClipboardSync is provided for personal and development use. Use it at your own discretion and ensure that it is appropriate for your environment.
 
 ## License
 
