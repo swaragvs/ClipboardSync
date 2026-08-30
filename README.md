@@ -69,3 +69,11 @@ The repository includes a CI workflow in `.github/workflows/build.yml` that rest
 ## Security note
 
 This app is intended for a private Tailscale mesh between trusted devices. It does not use a cloud service or external relay.
+
+## License
+
+Copyright © 2026 Swarag V S. All rights reserved.
+
+ClipboardSync is publicly available for viewing and personal evaluation. The source code remains the property of its author.
+
+Permission to use, modify, redistribute, or commercially distribute the source code is not granted unless explicitly authorized by the author.
