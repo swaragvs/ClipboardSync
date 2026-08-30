@@ -20,8 +20,10 @@ public sealed class TrayContext : IDisposable
 
         _contextMenu = new ContextMenuStrip();
         _contextMenu.Items.Add("Open", null, (_, _) => ShowMainForm());
+        _contextMenu.Items.Add("Peer Manager", null, (_, _) => ShowPeerManager());
+        _contextMenu.Items.Add("Clipboard History", null, (_, _) => ShowHistory());
         _contextMenu.Items.Add("Pause Sync", null, (_, _) => TogglePause());
-        _contextMenu.Items.Add("Settings", null, (_, _) => ShowMainForm());
+        _contextMenu.Items.Add("Settings", null, (_, _) => ShowSettings());
         _contextMenu.Items.Add(new ToolStripSeparator());
         _contextMenu.Items.Add("Exit", null, (_, _) => ExitApplication());
 
@@ -65,9 +67,27 @@ public sealed class TrayContext : IDisposable
         _mainForm.ShowInTaskbar = true;
     }
 
+    private void ShowPeerManager()
+    {
+        var peerManagerForm = new PeerManagerForm();
+        peerManagerForm.ShowDialog();
+    }
+
+    private void ShowHistory()
+    {
+        var historyForm = new HistoryForm();
+        historyForm.ShowDialog();
+    }
+
+    private void ShowSettings()
+    {
+        var settingsForm = new SettingsForm(_settings);
+        settingsForm.ShowDialog();
+    }
+
     private void TogglePause()
     {
-        var menuItem = _contextMenu.Items[1] as ToolStripMenuItem;
+        var menuItem = _contextMenu.Items[3] as ToolStripMenuItem;
         if (menuItem == null)
         {
             return;

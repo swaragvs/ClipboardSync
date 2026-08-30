@@ -9,6 +9,9 @@ public sealed class AppSettings
     public bool StartWithWindows { get; set; }
     public bool StartMinimized { get; set; }
     public bool CloseToTray { get; set; } = true;
+    public bool PauseHistory { get; set; }
+    public int HistoryMaxItems { get; set; } = 200;
+    public int HistoryMaxDaysOld { get; set; } = 30;
 
     public static AppSettings Load()
     {
