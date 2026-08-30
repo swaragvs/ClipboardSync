@@ -38,18 +38,69 @@ This will:
 - build the project
 - publish the app to the `publish` folder
 
-## Getting Started
-Clone the repository and restore the project:
+## Complete setup from clone to run
 
-```
+Follow these steps on each Windows machine you want to use:
+
+1. Clone the repository:
+
+   ```powershell
+   git clone https://github.com/swaragvs/ClipboardSync.git
+   cd ClipboardSync
+   ```
+
+2. Install the .NET 8 SDK if it is not already installed.
+
+   ```powershell
+   winget install --id Microsoft.DotNet.SDK.8 --source winget --accept-source-agreements --accept-package-agreements
+   ```
+
+3. Install Tailscale and connect both devices to the same account.
+
+4. Make sure both machines are connected to Tailscale and can see each other's Tailscale IPs.
+
+5. Run the setup script from the repository root:
+
+   ```powershell
+   powershell -ExecutionPolicy Bypass -File .\setup.ps1
+   ```
+
+   This creates the published app in the `publish` folder.
+
+6. Launch the app:
+
+   ```powershell
+   .\publish\ClipboardSyncApp.exe
+   ```
+
+7. In the app UI, enter the peer machine's Tailscale IP and port.
+
+   - Example peer IP: `100.64.0.2`
+   - Default port: `5001`
+
+8. Click `Connect` to test connectivity.
+
+9. Copy text on one device. It should appear on the other device's clipboard.
+
+## Manual run without the setup script
+
+If you prefer to do it manually:
+
+```powershell
 dotnet restore ClipboardSyncApp/ClipboardSyncApp.csproj
-```
-Run the application:
-
-```
+dotnet build ClipboardSyncApp/ClipboardSyncApp.csproj -c Release
 dotnet run --project ClipboardSyncApp/ClipboardSyncApp.csproj
 ```
-Configure the peer device in the application and connect.
+
+If you want to publish instead of running directly:
+
+```powershell
+dotnet publish ClipboardSyncApp/ClipboardSyncApp.csproj -c Release -o ./publish
+```
+
+## Getting Started
+
+After launch, configure the peer device in the application and connect.
 
 Once connected, clipboard text copied on one device can be synchronized to the other device.
 
