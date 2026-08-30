@@ -198,4 +198,18 @@ public class FullArchitectureAndContractTests
         // Windows fires SECOND WM_CLIPBOARDUPDATE event 10ms later for the SAME content -> MUST STILL BE SUPPRESSED!
         Assert.True(tracker.IsEcho(MessageType.ClipboardText, normBytes2));
     }
+
+    [Fact]
+    public void RemoteClipboardTracker_CircuitBreaker_ShouldSuppressAllLocalEventsWithinTwoSecondsOfRemoteInjection()
+    {
+        var tracker = new ClipboardSyncApp.Platform.Windows.RemoteClipboardTracker();
+        var injectedTextBytes = Encoding.UTF8.GetBytes("Remote Content");
+        var distinctLocalTextBytes = Encoding.UTF8.GetBytes("Completely Different User Copy");
+
+        // Record injected remote update
+        tracker.RecordInjectedRemote(MessageType.ClipboardText, injectedTextBytes, "msg-999");
+
+        // Any local clipboard watcher event occurring within 2 seconds of remote injection MUST BE SUPPRESSED to break feedback loops!
+        Assert.True(tracker.ShouldSuppressLocalChange(MessageType.ClipboardText, distinctLocalTextBytes));
+    }
 }

@@ -17,12 +17,21 @@ public sealed class RemoteClipboardTracker
     private readonly List<TrackedEntry> _entries = new();
     private readonly object _lock = new();
     private readonly TimeSpan _retentionWindow = TimeSpan.FromSeconds(5);
+    private readonly TimeSpan _cooldownWindow = TimeSpan.FromSeconds(2.0);
+
+    private DateTime _lastInjectedUtc = DateTime.MinValue;
+    private string _lastInjectedHash = string.Empty;
+
+    private DateTime _lastSentUtc = DateTime.MinValue;
+    private string _lastSentHash = string.Empty;
 
     public void RecordInjectedRemote(MessageType type, byte[] dataBytes, string messageId)
     {
         var hash = ComputeHash(dataBytes);
         lock (_lock)
         {
+            _lastInjectedUtc = DateTime.UtcNow;
+            _lastInjectedHash = hash;
             PruneStale();
             _entries.Add(new TrackedEntry
             {
@@ -39,6 +48,8 @@ public sealed class RemoteClipboardTracker
         var hash = ComputeHash(dataBytes);
         lock (_lock)
         {
+            _lastSentUtc = DateTime.UtcNow;
+            _lastSentHash = hash;
             PruneStale();
             _entries.Add(new TrackedEntry
             {
@@ -50,18 +61,37 @@ public sealed class RemoteClipboardTracker
         }
     }
 
-    public bool IsEcho(MessageType type, byte[] dataBytes)
+    public bool ShouldSuppressLocalChange(MessageType type, byte[] dataBytes)
     {
         var hash = ComputeHash(dataBytes);
+        var now = DateTime.UtcNow;
+
         lock (_lock)
         {
             PruneStale();
-            // Match any entry with the same content hash within the retention window.
-            // Do NOT remove the entry on first match, because Windows fires multiple WM_CLIPBOARDUPDATE
-            // messages asynchronously for a single Clipboard.SetText / SetDataObject call.
+
+            // 1. Break rule: If a remote update was injected within the last 2 seconds,
+            // suppress all local watcher updates during this 2-second cooldown window to break feedback loops.
+            if (now - _lastInjectedUtc < _cooldownWindow)
+            {
+                return true;
+            }
+
+            // 2. If the same content was sent locally within the last 2 seconds, suppress re-sending.
+            if (now - _lastSentUtc < _cooldownWindow && string.Equals(_lastSentHash, hash, StringComparison.Ordinal))
+            {
+                return true;
+            }
+
+            // 3. Match any known tracked entry in retention window
             var match = _entries.FirstOrDefault(e => e.Type == type && string.Equals(e.ContentHash, hash, StringComparison.Ordinal));
             return match != null;
         }
+    }
+
+    public bool IsEcho(MessageType type, byte[] dataBytes)
+    {
+        return ShouldSuppressLocalChange(type, dataBytes);
     }
 
     private void PruneStale()
