@@ -1,0 +1,45 @@
+name: Build ClipboardSync
+
+on:
+  push:
+    branches: ["master"]
+  pull_request:
+    branches: ["master"]
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+
+      - name: Restore
+        run: dotnet restore ClipboardSyncApp/ClipboardSyncApp.csproj
+
+      - name: Build
+        run: dotnet build ClipboardSyncApp/ClipboardSyncApp.csproj --configuration Release --no-restore
+
+      - name: Test
+        shell: pwsh
+        run: |
+          $testProjects = Get-ChildItem -Path . -Recurse -Filter *.csproj | Where-Object { $_.Name -match 'Test|Tests' }
+          if ($testProjects.Count -gt 0) {
+            dotnet test $testProjects[0].FullName --configuration Release --no-build
+          } else {
+            Write-Host "No test project found; skipping dotnet test."
+          }
+
+      - name: Publish
+        run: dotnet publish ClipboardSyncApp/ClipboardSyncApp.csproj --configuration Release --output ./publish --no-build
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ClipboardSync
+          path: ./publish
