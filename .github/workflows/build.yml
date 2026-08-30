@@ -22,18 +22,14 @@ jobs:
       - name: Restore
         run: dotnet restore ClipboardSyncApp/ClipboardSyncApp.csproj
 
-      - name: Build
+      - name: Build app
         run: dotnet build ClipboardSyncApp/ClipboardSyncApp.csproj --configuration Release --no-restore
 
+      - name: Build tests
+        run: dotnet build ClipboardSync.Tests/ClipboardSync.Tests.csproj --configuration Release --no-restore
+
       - name: Test
-        shell: pwsh
-        run: |
-          $testProjects = Get-ChildItem -Path . -Recurse -Filter *.csproj | Where-Object { $_.Name -match 'Test|Tests' }
-          if ($testProjects.Count -gt 0) {
-            dotnet test $testProjects[0].FullName --configuration Release --no-build
-          } else {
-            Write-Host "No test project found; skipping dotnet test."
-          }
+        run: dotnet test ClipboardSync.Tests/ClipboardSync.Tests.csproj --configuration Release --no-build --logger "console;verbosity=minimal"
 
       - name: Publish
         run: dotnet publish ClipboardSyncApp/ClipboardSyncApp.csproj --configuration Release --output ./publish --no-build
