@@ -14,9 +14,11 @@ public sealed class PeerManagerForm : Form
     private readonly Button _refreshDiscoveryButton;
     private readonly CheckBox _autoConnectCheckBox;
     private readonly DiscoveryService _discoveryService;
+    private readonly ClipboardSyncEngine? _engine;
 
-    public PeerManagerForm()
+    public PeerManagerForm(ClipboardSyncEngine? engine = null)
     {
+        _engine = engine;
         Text = "Peer Manager";
         Width = 800;
         Height = 500;
@@ -66,7 +68,7 @@ public sealed class PeerManagerForm : Form
         RefreshDiscovery();
 
         _addButton.Click += (_, _) => AddProfile();
-        _connectButton.Click += (_, _) => ConnectSelected();
+        _connectButton.Click += async (_, _) => await ConnectSelectedAsync();
         _removeButton.Click += (_, _) => RemoveSelected();
         _autoConnectCheckBox.CheckedChanged += (_, _) => ToggleAutoConnect();
         _refreshDiscoveryButton.Click += (_, _) => RefreshDiscovery();
@@ -80,10 +82,11 @@ public sealed class PeerManagerForm : Form
         var peers = ConnectionStore.Load();
         foreach (var peer in peers)
         {
+            var statusStr = peer.IsOnline ? "🟢 Online" : "🔴 Offline";
             var lastSeen = peer.LastConnectedUtc > DateTime.MinValue
                 ? $"[{peer.LastConnectedUtc:g}]"
                 : "[never]";
-            _peerList.Items.Add($"{peer.Name} ({peer.TailscaleIp}:{peer.Port}) {lastSeen}");
+            _peerList.Items.Add($"{statusStr} | {peer.Name} ({peer.TailscaleIp}:{peer.Port}) {lastSeen}");
         }
     }
 
@@ -91,7 +94,7 @@ public sealed class PeerManagerForm : Form
     {
         _discoveredList.Items.Clear();
         var candidates = _discoveryService.DiscoverPeerCandidates();
-        var savedIps = ConnectionStore.Load().Select(p => p.TailscaleIp).ToHashSet();
+        var savedIps = ConnectionStore.Load().Select(p => p.TailscaleIp).ToHashSet(StringComparer.OrdinalIgnoreCase);
 
         foreach (var candidate in candidates)
         {
@@ -137,15 +140,39 @@ public sealed class PeerManagerForm : Form
         RefreshDiscovery();
     }
 
-    private void ConnectSelected()
+    private async Task ConnectSelectedAsync()
     {
-        var item = _peerList.SelectedItem?.ToString();
-        if (string.IsNullOrWhiteSpace(item))
+        if (_peerList.SelectedIndex < 0)
         {
             return;
         }
 
-        MessageBox.Show(this, $"Connect action for: {item}", "Peer Manager");
+        var peers = ConnectionStore.Load();
+        if (_peerList.SelectedIndex < peers.Count)
+        {
+            var peer = peers[_peerList.SelectedIndex];
+            _connectButton.Enabled = false;
+            try
+            {
+                if (_engine != null)
+                {
+                    await _engine.AttemptPeerConnectionAsync(peer);
+                }
+                else
+                {
+                    using var testEngine = new ClipboardSyncEngine();
+                    await testEngine.AttemptPeerConnectionAsync(peer);
+                }
+
+                LoadPeers();
+                var status = peer.IsOnline ? "Connection successful!" : $"Connection failed: {peer.LastError}";
+                MessageBox.Show(this, status, "Peer Manager Connection", MessageBoxButtons.OK, peer.IsOnline ? MessageBoxIcon.Information : MessageBoxIcon.Warning);
+            }
+            finally
+            {
+                _connectButton.Enabled = true;
+            }
+        }
     }
 
     private void RemoveSelected()
@@ -201,3 +228,4 @@ public sealed class PeerManagerForm : Form
         }
     }
 }
+

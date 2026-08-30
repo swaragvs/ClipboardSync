@@ -1,6 +1,6 @@
-﻿namespace ClipboardSyncApp;
+namespace ClipboardSyncApp.UI;
 
-partial class Form1
+partial class MainForm
 {
     private System.ComponentModel.IContainer components = null;
     private System.Windows.Forms.Label peerIpLabel;
@@ -97,7 +97,7 @@ partial class Form1
         this.Controls.Add(this.peerIpLabel);
         this.FormBorderStyle = System.Windows.Forms.FormBorderStyle.FixedSingle;
         this.MaximizeBox = false;
-        this.Name = "Form1";
+        this.Name = "MainForm";
         this.StartPosition = System.Windows.Forms.FormStartPosition.CenterScreen;
         this.Text = "Clipboard Sync";
 

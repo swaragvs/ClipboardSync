@@ -69,7 +69,7 @@ public sealed class TrayContext : IDisposable
 
     private void ShowPeerManager()
     {
-        var peerManagerForm = new PeerManagerForm();
+        var peerManagerForm = new PeerManagerForm(_engine);
         peerManagerForm.ShowDialog();
     }
 
