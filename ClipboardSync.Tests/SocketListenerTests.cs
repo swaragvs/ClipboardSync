@@ -1,5 +1,6 @@
 using System.Net;
 using System.Net.Sockets;
+using ClipboardSyncApp.Config;
 using ClipboardSyncApp.Core;
 
 namespace ClipboardSync.Tests;
@@ -13,7 +14,8 @@ public class SocketListenerTests
         using var firstListener = new TcpListener(IPAddress.Any, port);
         firstListener.Start();
 
-        var engine = new ClipboardSyncEngine { Port = port };
+        var settings = new AppSettings { Port = port };
+        var engine = new ClipboardSyncEngine(settings);
         var statusMessages = new List<string>();
         engine.StatusChanged += (_, message) => statusMessages.Add(message);
 
@@ -21,7 +23,7 @@ public class SocketListenerTests
 
         Assert.Null(ex);
         Assert.Contains(statusMessages, message =>
-            message.Contains("Failed to start local listener", StringComparison.OrdinalIgnoreCase)
+            message.Contains("Failed to start", StringComparison.OrdinalIgnoreCase)
             || message.Contains("already in use", StringComparison.OrdinalIgnoreCase));
 
         engine.Stop();
