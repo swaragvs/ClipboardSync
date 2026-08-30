@@ -1,149 +1,241 @@
 # ClipboardSync
-A lightweight Windows application for synchronizing clipboard text between trusted devices over a private Tailscale network.
+
+[![.NET](https://img.shields.io/badge/.NET-8.0-512BD4)](https://dotnet.microsoft.com/)
+[![Platform](https://img.shields.io/badge/platform-Windows-0078D6)](#requirements)
+[![License](https://img.shields.io/badge/license-see%20LICENSE-lightgrey)](#license)
+
+A lightweight Windows application for **peer-to-peer clipboard synchronization** between devices.
+
+ClipboardSync allows connected devices to share clipboard content directly with each other, keeping copied text and images synchronized while the application runs quietly in the background.
+
+## Table of Contents
+
+- [Features](#features)
+- [Clipboard Support](#clipboard-support)
+- [Requirements](#requirements)
+- [Installation](#installation)
+- [Build From Source](#build-from-source)
+- [Publishing](#publishing)
+- [Running After Publishing](#running-after-publishing)
+- [Network Setup](#network-setup)
+- [Verification](#verification)
+- [Project Status](#project-status)
+- [Roadmap](#roadmap)
+- [License](#license)
 
 ## Features
 
-- Synchronizes clipboard text between connected Windows devices
-- Uses direct device-to-device communication
-- Works over a Tailscale network
-- Lightweight Windows desktop application
-- Designed for simple, private device-to-device use
+### Peer-to-Peer Clipboard Synchronization
+
+- Synchronizes clipboard content directly between connected peers.
+- No central clipboard server is required.
+- A clipboard update on one device can be propagated to the connected peer.
+- Supports two-way clipboard synchronization.
+- Designed to work across devices connected through private networks such as Tailscale.
+- Configurable peer IP address/hostname and port.
+
+### Text Clipboard Support
+
+- Supports copying and synchronizing text between devices.
+- Detects clipboard changes automatically.
+- Remote clipboard text can be applied to the local clipboard.
+- Prevents received clipboard content from creating an endless synchronization loop.
+
+### Image Clipboard Support
+
+- Supports clipboard images.
+- Images copied on one device can be transferred to the connected peer and placed into its clipboard.
+- Enables convenient copying of screenshots and other clipboard-compatible image content between devices.
+
+### Background Operation
+
+- Runs in the background after startup.
+- Continuously monitors the clipboard for changes.
+- Synchronization happens without requiring the application window to remain open.
+- Designed to stay out of the way during normal desktop usage.
+
+### Peer Connection Management
+
+- Maintains connections with configured peers.
+- Displays peer connection status.
+- Handles connection and disconnection events.
+- Attempts to reconnect when a peer becomes unavailable.
+- Reports connection and transport errors through application logs.
+
+### Activity Logging
+
+Provides useful runtime information including:
+
+- Clipboard updates sent to peers.
+- Clipboard updates received from peers.
+- Peer connection status.
+- Connection attempts.
+- Disconnections.
+- Network/transport errors.
+
+### Synchronization Loop Protection
+
+ClipboardSync includes protection against the common synchronization feedback-loop problem, for example:
+
+```text
+Device A → Device B → Device A → Device B → ...
+```
+
+Received clipboard content is not blindly treated as a new local clipboard change, preventing the same content from continuously bouncing between peers.
+
+## Clipboard Support
+
+| Content Type | Status              |
+| ------------ | ------------------- |
+| Text         | ✅ Supported         |
+| Images       | ✅ Supported         |
+| Files        | ❌ Not yet supported |
+
+**File transfer is not currently implemented.** ClipboardSync currently synchronizes clipboard text and images, but copying files through the Windows clipboard is not yet transferred between peers. File synchronization/transfer can be added in a future release.
 
 ## Requirements
 
-- Windows 10 or later
-- .NET 8 SDK installed on the development machine for building and running the app
-- Tailscale installed and connected on both devices
-- Both devices must be online and reachable through the same Tailscale network
-- A known peer Tailscale IP address for the target device (for example `100.x.x.x`)
-- A free TCP port on both devices for the sync listener (default: `5001`)
-- A trusted local setup; this project is intended for private device-to-device clipboard sharing only
-- Text clipboard use only in the current implementation; image and file clipboard sync are not included
+- Windows
+- .NET 8 SDK/runtime
+- Network connectivity between the devices
+- A configured peer running ClipboardSync
+- Appropriate firewall/network access for the configured port
 
-## Quick setup on a Windows machine
+For development/building from source, install the **.NET 8 SDK**.
 
-This project does not use a `requirements.txt` file because it is a .NET application. The closest equivalent is a bootstrap script that installs the .NET SDK if needed, restores dependencies, builds, and publishes the app.
+## Installation
 
-From PowerShell in the project root:
+### Option 1 — Use the Published Build
 
-```powershell
-powershell -ExecutionPolicy Bypass -File .\setup.ps1
+Recommended for normal end-user installation. The .NET SDK is not required when using a self-contained published build.
+
+1. Download the latest ClipboardSync release.
+2. Download the published `.zip` package from the **Release Assets**.
+3. Extract the ZIP file to a folder.
+4. Open the extracted folder.
+5. Run `ClipboardSyncApp.exe`.
+6. Configure the peer/device connection.
+7. Run ClipboardSync on the other device.
+8. Once the peers connect, clipboard synchronization can begin.
+
+## Build From Source
+
+```bash
+git clone https://github.com/swaragvs/ClipboardSync.git
+cd ClipboardSync/ClipboardSyncApp
+dotnet restore
+dotnet build
+dotnet run
 ```
 
-This will:
+## Publishing
 
-- check for the .NET 8 SDK
-- install it automatically if missing
-- restore NuGet packages
-- build the project
-- publish the app to the `publish` folder
+To create a release-ready build:
 
-## Complete setup from clone to run
-
-Follow these steps on each Windows machine you want to use:
-
-1. Clone the repository:
-
-   ```powershell
-   git clone https://github.com/swaragvs/ClipboardSync.git
-   cd ClipboardSync
-   ```
-
-2. Install the .NET 8 SDK if it is not already installed.
-
-   ```powershell
-   winget install --id Microsoft.DotNet.SDK.8 --source winget --accept-source-agreements --accept-package-agreements
-   ```
-
-3. Install Tailscale and connect both devices to the same account.
-
-4. Make sure both machines are connected to Tailscale and can see each other's Tailscale IPs.
-
-5. Run the setup script from the repository root:
-
-   ```powershell
-   powershell -ExecutionPolicy Bypass -File .\setup.ps1
-   ```
-
-   This creates the published app in the `publish` folder.
-
-6. Launch the app:
-
-   ```powershell
-   .\publish\ClipboardSyncApp.exe
-   ```
-
-7. In the app UI, enter the peer machine's Tailscale IP and port.
-
-   - Example peer IP: `100.64.0.2`
-   - Default port: `5001`
-
-8. Click `Connect` to test connectivity.
-
-9. Copy text on one device. It should appear on the other device's clipboard.
-
-## Manual run without the setup script
-
-If you prefer to do it manually:
-
-```powershell
-dotnet restore ClipboardSyncApp/ClipboardSyncApp.csproj
-dotnet build ClipboardSyncApp/ClipboardSyncApp.csproj -c Release
-dotnet run --project ClipboardSyncApp/ClipboardSyncApp.csproj
+```bash
+dotnet publish -c Release
 ```
 
-If you want to publish instead of running directly:
+The published application will be placed under the project's `bin` directory, inside the Release publish folder, for example:
 
-```powershell
-dotnet publish ClipboardSyncApp/ClipboardSyncApp.csproj -c Release -o ./publish
+```text
+ClipboardSyncApp/
+└── bin/
+    └── Release/
+        └── net8.0-windows/
+            └── publish/
 ```
 
-## Getting Started
+The exact output path can vary depending on the project configuration.
 
-After launch, configure the peer device in the application and connect.
+### Recommended Windows Publish
 
-Once connected, clipboard text copied on one device can be synchronized to the other device.
+For easier distribution to another Windows machine, create a self-contained Windows build:
 
-## Build
-Build a Release version with:
-
-```
-dotnet build ClipboardSyncApp/ClipboardSyncApp.csproj -c Release
-```
-To publish the application:
-
-```
-dotnet publish ClipboardSyncApp/ClipboardSyncApp.csproj -c Release -o ./publish
+```bash
+dotnet publish -c Release -r win-x64 --self-contained true
 ```
 
-## Privacy
-ClipboardSync is designed for direct communication between trusted devices over a private Tailscale network.
+This produces a Windows x64 build that includes the required .NET runtime. The resulting files can be packaged into a ZIP and uploaded to the GitHub Release.
 
-Clipboard content is transmitted between the configured devices for synchronization.
+## Running After Publishing
 
-Do not use ClipboardSync with sensitive clipboard information unless you understand and trust the network and devices involved.
+1. Open the `publish` folder.
+2. Locate `ClipboardSyncApp.exe`.
+3. Run the executable.
+4. Configure the peer connection.
+5. Start ClipboardSync on the second device.
+6. Verify that the peers connect.
+7. Copy text or an image on either device.
+8. The clipboard update should be synchronized to the connected peer.
+
+## Network Setup
+
+ClipboardSync can be used between devices connected through a private network, for example:
+
+```text
+Device A                          Device B
+ClipboardSync                     ClipboardSync
+     │                                 │
+     │            Peer-to-Peer         │
+     └──────────► 100.x.x.x:5001 ◄─────┘
+```
+
+A private network such as Tailscale can provide connectivity between devices even when they are not on the same physical LAN. The configured port must be reachable between the two devices.
+
+## Verification
+
+To verify the application after building:
+
+```bash
+dotnet restore
+dotnet build
+dotnet test
+```
+
+A successful build should report:
+
+```text
+Build succeeded.
+    0 Warning(s)
+    0 Error(s)
+```
+
+`dotnet test` can be used when test projects are present in the solution.
 
 ## Project Status
-ClipboardSync is an independently developed project and is currently under active development.
 
-Features and implementation details may change as the project evolves.
+| Feature                        | Status |
+| ------------------------------ | ------ |
+| Peer-to-peer communication     | ✅     |
+| Two-way clipboard sync         | ✅     |
+| Text synchronization           | ✅     |
+| Image synchronization          | ✅     |
+| Background operation           | ✅     |
+| Peer connection monitoring     | ✅     |
+| Reconnection handling          | ✅     |
+| Activity/error logging         | ✅     |
+| Synchronization loop protection| ✅     |
+| File transfer                  | ❌ Not implemented yet |
 
-## Ownership & Usage
-Copyright © 2026 Swarag V S. All rights reserved.
+## Roadmap
 
-This repository is publicly available for viewing and reference.
+Potential future features include:
 
-No license is granted to copy, modify, redistribute, sublicense, or commercially exploit the source code unless expressly permitted by the copyright holder.
-
-Tailscale is a separate product and trademark of its respective owner. ClipboardSync is not affiliated with or endorsed by Tailscale.
-
-## Disclaimer
-ClipboardSync is provided for personal and development use. Use it at your own discretion and ensure that it is appropriate for your environment.
+- Clipboard file transfer
+- Folder/file synchronization
+- End-to-end encryption
+- Multiple peer support
+- Improved configuration UI
+- Connection/status notifications
+- Transfer statistics
+- Improved logging and diagnostics
+- Automatic startup with Windows
 
 ## License
 
-Copyright © 2026 Swarag V S. All rights reserved.
+See the [LICENSE](LICENSE) file for the applicable terms.
 
-ClipboardSync is publicly available for viewing and personal evaluation. The source code remains the property of its author.
+---
 
-Permission to use, modify, redistribute, or commercially distribute the source code is not granted unless explicitly authorized by the author.
+**ClipboardSync v1.0.0** — Simple. Direct. Peer-to-peer clipboard synchronization for Windows.
