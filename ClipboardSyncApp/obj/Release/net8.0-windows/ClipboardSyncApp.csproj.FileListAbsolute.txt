@@ -1,0 +1,14 @@
+C:\My_projects\ClipboardSync\ClipboardSyncApp\obj\Release\net8.0-windows\ClipboardSyncApp.GeneratedMSBuildEditorConfig.editorconfig
+C:\My_projects\ClipboardSync\ClipboardSyncApp\obj\Release\net8.0-windows\ClipboardSyncApp.AssemblyInfoInputs.cache
+C:\My_projects\ClipboardSync\ClipboardSyncApp\obj\Release\net8.0-windows\ClipboardSyncApp.AssemblyInfo.cs
+C:\My_projects\ClipboardSync\ClipboardSyncApp\obj\Release\net8.0-windows\ClipboardSyncApp.csproj.CoreCompileInputs.cache
+C:\My_projects\ClipboardSync\ClipboardSyncApp\bin\Release\net8.0-windows\ClipboardSyncApp.exe
+C:\My_projects\ClipboardSync\ClipboardSyncApp\bin\Release\net8.0-windows\ClipboardSyncApp.deps.json
+C:\My_projects\ClipboardSync\ClipboardSyncApp\bin\Release\net8.0-windows\ClipboardSyncApp.runtimeconfig.json
+C:\My_projects\ClipboardSync\ClipboardSyncApp\bin\Release\net8.0-windows\ClipboardSyncApp.dll
+C:\My_projects\ClipboardSync\ClipboardSyncApp\bin\Release\net8.0-windows\ClipboardSyncApp.pdb
+C:\My_projects\ClipboardSync\ClipboardSyncApp\obj\Release\net8.0-windows\ClipboardSyncApp.dll
+C:\My_projects\ClipboardSync\ClipboardSyncApp\obj\Release\net8.0-windows\refint\ClipboardSyncApp.dll
+C:\My_projects\ClipboardSync\ClipboardSyncApp\obj\Release\net8.0-windows\ClipboardSyncApp.pdb
+C:\My_projects\ClipboardSync\ClipboardSyncApp\obj\Release\net8.0-windows\ClipboardSyncApp.genruntimeconfig.cache
+C:\My_projects\ClipboardSync\ClipboardSyncApp\obj\Release\net8.0-windows\ref\ClipboardSyncApp.dll
