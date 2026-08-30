@@ -20,6 +20,24 @@ A lightweight Windows application for synchronizing clipboard text between trust
 - A trusted local setup; this project is intended for private device-to-device clipboard sharing only
 - Text clipboard use only in the current implementation; image and file clipboard sync are not included
 
+## Quick setup on a Windows machine
+
+This project does not use a `requirements.txt` file because it is a .NET application. The closest equivalent is a bootstrap script that installs the .NET SDK if needed, restores dependencies, builds, and publishes the app.
+
+From PowerShell in the project root:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\setup.ps1
+```
+
+This will:
+
+- check for the .NET 8 SDK
+- install it automatically if missing
+- restore NuGet packages
+- build the project
+- publish the app to the `publish` folder
+
 ## Getting Started
 Clone the repository and restore the project:
 
