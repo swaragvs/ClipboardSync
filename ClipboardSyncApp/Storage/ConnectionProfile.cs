@@ -1,3 +1,5 @@
+using System.Text.Json.Serialization;
+
 namespace ClipboardSyncApp.Storage;
 
 public sealed class ConnectionProfile
@@ -9,4 +11,11 @@ public sealed class ConnectionProfile
     public DateTime LastConnectedUtc { get; set; } = DateTime.MinValue;
     public bool AutoConnect { get; set; }
     public string? SharedKey { get; set; }
+
+    [JsonIgnore]
+    public bool IsOnline { get; set; }
+
+    [JsonIgnore]
+    public string? LastError { get; set; }
 }
+

@@ -5,6 +5,7 @@ namespace ClipboardSyncApp.Storage;
 public sealed class ConnectionStore
 {
     private const string FileName = "peers.json";
+    private static readonly object FileLock = new();
 
     public static string GetStorePath()
     {
@@ -14,6 +15,51 @@ public sealed class ConnectionStore
     }
 
     public static List<ConnectionProfile> Load()
+    {
+        lock (FileLock)
+        {
+            return LoadInternal();
+        }
+    }
+
+    public static void Save(List<ConnectionProfile> profiles)
+    {
+        lock (FileLock)
+        {
+            SaveInternal(profiles);
+        }
+    }
+
+    public static void Upsert(ConnectionProfile profile)
+    {
+        lock (FileLock)
+        {
+            var profiles = LoadInternal();
+            var existingIndex = profiles.FindIndex(x => string.Equals(x.Id, profile.Id, StringComparison.OrdinalIgnoreCase));
+            if (existingIndex >= 0)
+            {
+                profiles[existingIndex] = profile;
+            }
+            else
+            {
+                profiles.Add(profile);
+            }
+
+            SaveInternal(profiles);
+        }
+    }
+
+    public static void Delete(string id)
+    {
+        lock (FileLock)
+        {
+            var profiles = LoadInternal();
+            var filtered = profiles.Where(x => !string.Equals(x.Id, id, StringComparison.OrdinalIgnoreCase)).ToList();
+            SaveInternal(filtered);
+        }
+    }
+
+    private static List<ConnectionProfile> LoadInternal()
     {
         var path = GetStorePath();
         if (!File.Exists(path))
@@ -29,37 +75,22 @@ public sealed class ConnectionStore
         }
         catch
         {
+            // Corrupt file fallback
             return new List<ConnectionProfile>();
         }
     }
 
-    public static void Save(List<ConnectionProfile> profiles)
+    private static void SaveInternal(List<ConnectionProfile> profiles)
     {
         var path = GetStorePath();
+        var tempPath = path + ".tmp";
         var json = JsonSerializer.Serialize(profiles, new JsonSerializerOptions { WriteIndented = true });
-        File.WriteAllText(path, json);
-    }
 
-    public static void Upsert(ConnectionProfile profile)
-    {
-        var profiles = Load();
-        var existingIndex = profiles.FindIndex(x => string.Equals(x.Id, profile.Id, StringComparison.OrdinalIgnoreCase));
-        if (existingIndex >= 0)
+        File.WriteAllText(tempPath, json);
+        if (File.Exists(path))
         {
-            profiles[existingIndex] = profile;
+            File.Delete(path);
         }
-        else
-        {
-            profiles.Add(profile);
-        }
-
-        Save(profiles);
-    }
-
-    public static void Delete(string id)
-    {
-        var profiles = Load();
-        var filtered = profiles.Where(x => !string.Equals(x.Id, id, StringComparison.OrdinalIgnoreCase)).ToList();
-        Save(filtered);
+        File.Move(tempPath, path);
     }
 }

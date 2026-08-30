@@ -1,31 +1,53 @@
 using System.Net;
 using System.Net.Sockets;
 using System.Text;
-using System.Text.Json;
+using ClipboardSyncApp.Config;
+using ClipboardSyncApp.Platform.Windows;
 using ClipboardSyncApp.Storage;
 
 namespace ClipboardSyncApp.Core;
 
 public sealed class ClipboardSyncEngine : IDisposable
 {
-    private const int DefaultPort = 5001;
-    private const string DefaultPeerIp = "100.64.0.2";
-    private const byte ProtocolVersion = 1;
-
     private readonly string _instanceId = Guid.NewGuid().ToString("N");
-    private readonly object _statusLock = new();
-    private readonly Dictionary<string, PeerConnection> _activePeerConnections = new();
+    private readonly AppSettings _settings;
+    private readonly IClipboardService? _clipboardService;
+    private readonly IClipboardWatcher? _clipboardWatcher;
+    private readonly RemoteClipboardTracker _remoteTracker = new();
+    private readonly FileTransferService _fileTransferService = new();
+
+    private readonly HashSet<string> _recentMessageIds = new();
+    private readonly Queue<string> _recentMessageIdQueue = new();
+    private readonly object _messageIdLock = new();
+
     private PeerManager? _peerManager;
     private AutoconnectManager? _autoconnectManager;
     private TcpListener? _listener;
     private CancellationTokenSource? _listenerCts;
-    private string _lastReceivedMessageId = string.Empty;
 
-    public string PeerIp { get; set; } = DefaultPeerIp;
-    public int Port { get; set; } = DefaultPort;
+    public string InstanceId => _instanceId;
+    public int Port => _settings.Port;
+    public PeerManager? PeerManager => _peerManager;
+    public FileTransferService FileTransferService => _fileTransferService;
+    public RemoteClipboardTracker RemoteTracker => _remoteTracker;
 
     public event EventHandler<string>? StatusChanged;
     public event EventHandler<string>? ClipboardTextReceived;
+    public event EventHandler<byte[]>? ClipboardImageReceived;
+    public event EventHandler<string>? ClipboardRtfReceived;
+    public event EventHandler<string>? ClipboardFileReceived;
+
+    public ClipboardSyncEngine(AppSettings? settings = null, IClipboardService? clipboardService = null, IClipboardWatcher? clipboardWatcher = null)
+    {
+        _settings = settings ?? AppSettings.Load();
+        _clipboardService = clipboardService;
+        _clipboardWatcher = clipboardWatcher;
+
+        if (_clipboardWatcher != null)
+        {
+            _clipboardWatcher.ClipboardChanged += OnLocalClipboardChanged;
+        }
+    }
 
     public void Start()
     {
@@ -36,29 +58,34 @@ public sealed class ClipboardSyncEngine : IDisposable
 
         try
         {
-            _peerManager = new PeerManager();
+            _peerManager = new PeerManager(_instanceId);
+            _peerManager.StatusChanged += (_, msg) => AppendStatus(msg);
+            _peerManager.PayloadReceived += OnPayloadReceivedFromPeer;
+            _peerManager.InitializeConnections();
+
             _autoconnectManager = new AutoconnectManager(_peerManager, AttemptPeerConnectionAsync);
             _autoconnectManager.Start();
 
-            _listener = new TcpListener(IPAddress.Any, Port);
+            _listener = new TcpListener(IPAddress.Any, _settings.Port);
             _listener.Start();
             _listenerCts = new CancellationTokenSource();
             _ = Task.Run(() => ListenLoopAsync(_listenerCts.Token));
-            AppendStatus($"Application ready. Local listener on port {Port}. Autoconnect profiles: {_peerManager.GetAutoConnectProfiles().Count}");
+
+            AppendStatus($"Application ready. Listener active on port {_settings.Port}. Autoconnect profiles: {_peerManager.GetAutoConnectProfiles().Count}");
         }
         catch (SocketException ex)
         {
             _listener = null;
             _listenerCts = null;
             _autoconnectManager?.Stop();
-            AppendStatus($"Failed to start local listener on port {Port}: {ex.Message} (port is already in use or unavailable).");
+            AppendStatus($"Failed to start listener on port {_settings.Port}: {ex.Message}");
         }
     }
 
     public void Stop()
     {
         _listenerCts?.Cancel();
-        _listener?.Stop();
+        try { _listener?.Stop(); } catch { }
         _listener = null;
         _listenerCts = null;
 
@@ -66,119 +93,250 @@ public sealed class ClipboardSyncEngine : IDisposable
         _autoconnectManager?.Dispose();
         _autoconnectManager = null;
 
-        lock (_activePeerConnections)
-        {
-            foreach (var conn in _activePeerConnections.Values)
-            {
-                conn.Dispose();
-            }
-
-            _activePeerConnections.Clear();
-        }
+        _peerManager?.Dispose();
+        _peerManager = null;
     }
 
-    public async Task TestPeerConnectionAsync()
-    {
-        if (string.IsNullOrWhiteSpace(PeerIp))
-        {
-            AppendStatus("Enter a valid Tailscale peer IP before syncing.");
-            return;
-        }
-
-        try
-        {
-            using var client = new TcpClient();
-            await client.ConnectAsync(PeerIp, Port);
-            AppendStatus($"Connection test succeeded to {PeerIp}:{Port}.");
-        }
-        catch (Exception ex)
-        {
-            AppendStatus($"Connection test failed to {PeerIp}:{Port}: {ex.Message}");
-        }
-    }
-
-    public async Task SendTextAsync(string text)
+    public Task SendTextAsync(string text)
     {
         if (string.IsNullOrWhiteSpace(text))
         {
-            return;
+            return Task.CompletedTask;
         }
 
         var payload = new ClipboardPayload
         {
-            Kind = ClipboardPayloadKind.Text,
+            Type = MessageType.ClipboardText,
             SessionId = _instanceId,
             MessageId = Guid.NewGuid().ToString("N"),
             Text = text
         };
 
-        // Fan-out to all autoconnect peers
-        if (_peerManager != null)
+        return SendPayloadAsync(payload);
+    }
+
+    public Task SendImageAsync(byte[] pngBytes)
+    {
+        if (pngBytes == null || pngBytes.Length == 0)
         {
-            var profiles = _peerManager.GetAutoConnectProfiles();
-            var sendTasks = profiles.Select(p => SendToPeerAsync(p, payload)).ToList();
-            _ = Task.WhenAll(sendTasks);
+            return Task.CompletedTask;
         }
 
-        // Also send to manually-specified peer for backward compatibility
-        if (!string.IsNullOrWhiteSpace(PeerIp))
+        var payload = new ClipboardPayload
         {
-            try
+            Type = MessageType.ClipboardImage,
+            SessionId = _instanceId,
+            MessageId = Guid.NewGuid().ToString("N"),
+            ImageBytes = pngBytes
+        };
+
+        return SendPayloadAsync(payload);
+    }
+
+    public Task SendFileOfferAsync(string localFilePath)
+    {
+        if (!File.Exists(localFilePath))
+        {
+            return Task.CompletedTask;
+        }
+
+        var transferId = _fileTransferService.CreateFileOffer(localFilePath, out var offerPayload);
+        offerPayload.SessionId = _instanceId;
+        _ = SendPayloadAsync(offerPayload);
+
+        // Stream file out
+        if (_peerManager != null)
+        {
+            _ = Task.Run(async () =>
             {
-                using var client = new TcpClient();
-                await client.ConnectAsync(PeerIp, Port);
-                using var stream = client.GetStream();
-                var json = JsonSerializer.Serialize(payload);
-                var body = Encoding.UTF8.GetBytes(json);
-                await WriteFrameAsync(stream, body);
-                await stream.FlushAsync();
-                AppendStatus($"Sent clipboard update to {PeerIp}:{Port} ({text.Length} chars).");
+                await _fileTransferService.StreamOutboundFileAsync(localFilePath, transferId, payload =>
+                {
+                    payload.SessionId = _instanceId;
+                    _peerManager.FanOutPayload(payload);
+                    return Task.CompletedTask;
+                }, CancellationToken.None);
+            });
+        }
+
+        return Task.CompletedTask;
+    }
+
+    public Task SendPayloadAsync(ClipboardPayload payload)
+    {
+        if (payload == null)
+        {
+            return Task.CompletedTask;
+        }
+
+        payload.SessionId = _instanceId;
+        if (string.IsNullOrEmpty(payload.MessageId))
+        {
+            payload.MessageId = Guid.NewGuid().ToString("N");
+        }
+
+        // Single outbound path: Fan out through PeerManager
+        if (_peerManager != null)
+        {
+            _peerManager.FanOutPayload(payload);
+        }
+
+        return Task.CompletedTask;
+    }
+
+    private void OnLocalClipboardChanged(object? sender, EventArgs e)
+    {
+        if (_clipboardService == null)
+        {
+            return;
+        }
+
+        if (_clipboardService.HasText())
+        {
+            var text = _clipboardService.GetText();
+            if (!string.IsNullOrWhiteSpace(text))
+            {
+                if (_remoteTracker.IsEcho(MessageType.ClipboardText, Encoding.UTF8.GetBytes(text)))
+                {
+                    return;
+                }
+                _ = SendTextAsync(text);
+                return;
             }
-            catch (Exception ex)
+        }
+
+        if (_clipboardService.HasImage())
+        {
+            var bytes = _clipboardService.GetImageBytes();
+            if (bytes != null && bytes.Length > 0)
             {
-                AppendStatus($"Send failed to {PeerIp}:{Port}: {ex.Message}");
+                if (_remoteTracker.IsEcho(MessageType.ClipboardImage, bytes))
+                {
+                    return;
+                }
+                _ = SendImageAsync(bytes);
+                return;
             }
         }
     }
 
-    private async Task SendToPeerAsync(ConnectionProfile profile, ClipboardPayload payload)
+    private void OnPayloadReceivedFromPeer(object? sender, ClipboardPayload payload)
+    {
+        if (payload == null || payload.SessionId == _instanceId || IsDuplicateMessage(payload.MessageId))
+        {
+            return;
+        }
+
+        switch (payload.Type)
+        {
+            case MessageType.ClipboardText:
+                if (!string.IsNullOrWhiteSpace(payload.Text))
+                {
+                    _remoteTracker.RecordInjectedRemote(MessageType.ClipboardText, Encoding.UTF8.GetBytes(payload.Text), payload.MessageId);
+                    _clipboardService?.SetText(payload.Text);
+                    ClipboardTextReceived?.Invoke(this, payload.Text);
+                    AppendStatus($"Received remote text ({payload.Text.Length} chars).");
+                }
+                break;
+
+            case MessageType.ClipboardImage:
+                if (payload.ImageBytes != null && payload.ImageBytes.Length > 0)
+                {
+                    _remoteTracker.RecordInjectedRemote(MessageType.ClipboardImage, payload.ImageBytes, payload.MessageId);
+                    _clipboardService?.SetImageBytes(payload.ImageBytes);
+                    ClipboardImageReceived?.Invoke(this, payload.ImageBytes);
+                    AppendStatus($"Received remote image ({payload.ImageBytes.Length} bytes).");
+                }
+                break;
+
+            case MessageType.ClipboardRtf:
+                if (!string.IsNullOrWhiteSpace(payload.RtfText))
+                {
+                    _clipboardService?.SetRtf(payload.RtfText);
+                    ClipboardRtfReceived?.Invoke(this, payload.RtfText);
+                    AppendStatus("Received remote RTF text.");
+                }
+                break;
+
+            case MessageType.FileOffer:
+                _ = HandleFileOfferAsync(payload);
+                break;
+
+            case MessageType.FileChunk:
+                _ = _fileTransferService.ProcessIncomingChunkAsync(payload);
+                break;
+
+            case MessageType.FileComplete:
+                if (!string.IsNullOrEmpty(payload.TransferId))
+                {
+                    _ = Task.Run(async () =>
+                    {
+                        try
+                        {
+                            var finalPath = await _fileTransferService.CompleteIncomingTransferAsync(payload.TransferId);
+                            if (!string.IsNullOrEmpty(finalPath))
+                            {
+                                ClipboardFileReceived?.Invoke(this, finalPath);
+                                AppendStatus($"File received and verified: {finalPath}");
+                            }
+                        }
+                        catch (Exception ex)
+                        {
+                            AppendStatus($"File transfer completion error: {ex.Message}");
+                        }
+                    });
+                }
+                break;
+
+            case MessageType.FileCancel:
+                if (!string.IsNullOrEmpty(payload.TransferId))
+                {
+                    _fileTransferService.CancelTransfer(payload.TransferId);
+                    AppendStatus($"File transfer {payload.TransferId} was cancelled by sender.");
+                }
+                break;
+        }
+    }
+
+    private async Task HandleFileOfferAsync(ClipboardPayload payload)
+    {
+        if (string.IsNullOrEmpty(payload.TransferId) || string.IsNullOrEmpty(payload.FileName))
+        {
+            return;
+        }
+
+        var transferId = _fileTransferService.PrepareIncomingTransfer(payload);
+        AppendStatus($"Receiving file offer: {payload.FileName} ({payload.FileSize} bytes). Initialized transfer {transferId}.");
+
+        // Send FileAccept back
+        var acceptPayload = new ClipboardPayload
+        {
+            Type = MessageType.FileAccept,
+            SessionId = _instanceId,
+            MessageId = Guid.NewGuid().ToString("N"),
+            TransferId = transferId
+        };
+        await SendPayloadAsync(acceptPayload);
+    }
+
+    public async Task AttemptPeerConnectionAsync(ConnectionProfile profile)
     {
         try
         {
             using var client = new TcpClient();
             await client.ConnectAsync(profile.TailscaleIp, profile.Port);
-            using var stream = client.GetStream();
-            var json = JsonSerializer.Serialize(payload);
-            var body = Encoding.UTF8.GetBytes(json);
-            await WriteFrameAsync(stream, body);
-            await stream.FlushAsync();
 
-            // Update last connected time on success
+            profile.IsOnline = true;
             profile.LastConnectedUtc = DateTime.UtcNow;
+            profile.LastError = null;
             _peerManager?.AddOrUpdate(profile);
-
-            AppendStatus($"Sent to {profile.Name} ({profile.TailscaleIp}:{profile.Port}).");
+            _autoconnectManager?.ResetBackoff(profile.Id);
+            AppendStatus($"Autoconnect: {profile.Name} ({profile.TailscaleIp}) verified connected.");
         }
         catch (Exception ex)
         {
-            AppendStatus($"Send to {profile.Name} failed: {ex.Message}");
-        }
-    }
-
-    private async Task AttemptPeerConnectionAsync(ConnectionProfile profile)
-    {
-        try
-        {
-            using var client = new TcpClient();
-            await client.ConnectAsync(profile.TailscaleIp, profile.Port);
-            profile.LastConnectedUtc = DateTime.UtcNow;
-            _peerManager?.AddOrUpdate(profile);
-            _autoconnectManager?.ResetBackoff(profile.Id);
-            AppendStatus($"Autoconnect: {profile.Name} ({profile.TailscaleIp}) connected.");
-        }
-        catch
-        {
-            // Backoff manager will retry
+            profile.IsOnline = false;
+            profile.LastError = ex.Message;
+            AppendStatus($"Autoconnect for {profile.Name} failed: {ex.Message}");
         }
     }
 
@@ -188,124 +346,62 @@ public sealed class ClipboardSyncEngine : IDisposable
 
         while (!cancellationToken.IsCancellationRequested)
         {
-            TcpClient client;
             try
             {
-                client = await listener.AcceptTcpClientAsync(cancellationToken);
+                var client = await listener.AcceptTcpClientAsync(cancellationToken);
+                var stream = client.GetStream();
+                var remoteIp = (client.Client.RemoteEndPoint as IPEndPoint)?.Address.ToString() ?? string.Empty;
+
+                // Find or create profile for incoming peer
+                var profile = _peerManager?.Profiles.FirstOrDefault(p => string.Equals(p.TailscaleIp, remoteIp, StringComparison.OrdinalIgnoreCase));
+                if (profile == null)
+                {
+                    profile = new ConnectionProfile { Name = $"Peer {remoteIp}", TailscaleIp = remoteIp, Port = _settings.Port };
+                }
+
+                var conn = _peerManager?.GetOrCreateConnection(profile);
+                conn?.AttachInboundSocket(client, stream);
             }
             catch (OperationCanceledException)
             {
                 break;
             }
-            catch (SocketException ex)
+            catch (Exception ex)
             {
-                AppendStatus($"Socket listener error: {ex.Message}");
-                break;
+                AppendStatus($"Inbound listener error: {ex.Message}");
             }
-
-            _ = HandleClientAsync(client);
         }
     }
 
-    private async Task HandleClientAsync(TcpClient client)
+    private bool IsDuplicateMessage(string messageId)
     {
-        try
+        if (string.IsNullOrEmpty(messageId))
         {
-            using var stream = client.GetStream();
-            var payload = await ReadFrameAsync(stream);
-            if (payload == null)
+            return false;
+        }
+
+        lock (_messageIdLock)
+        {
+            if (_recentMessageIds.Contains(messageId))
             {
-                return;
+                return true;
             }
 
-            if (payload.SessionId == _instanceId || payload.MessageId == _lastReceivedMessageId)
+            _recentMessageIds.Add(messageId);
+            _recentMessageIdQueue.Enqueue(messageId);
+            if (_recentMessageIdQueue.Count > 100)
             {
-                return;
+                var oldest = _recentMessageIdQueue.Dequeue();
+                _recentMessageIds.Remove(oldest);
             }
 
-            _lastReceivedMessageId = payload.MessageId;
-            if (payload.Kind == ClipboardPayloadKind.Text && !string.IsNullOrWhiteSpace(payload.Text))
-            {
-                ClipboardTextReceived?.Invoke(this, payload.Text);
-            }
+            return false;
         }
-        catch (Exception ex)
-        {
-            AppendStatus($"Receive failed: {ex.Message}");
-        }
-    }
-
-    private static async Task WriteFrameAsync(NetworkStream stream, byte[] payload)
-    {
-        var header = new byte[5];
-        header[0] = ProtocolVersion;
-        BitConverter.GetBytes(IPAddress.NetworkToHostOrder((short)payload.Length));
-        header[1] = (byte)((payload.Length >> 24) & 0xFF);
-        header[2] = (byte)((payload.Length >> 16) & 0xFF);
-        header[3] = (byte)((payload.Length >> 8) & 0xFF);
-        header[4] = (byte)(payload.Length & 0xFF);
-
-        await stream.WriteAsync(header, 0, header.Length);
-        await stream.WriteAsync(payload, 0, payload.Length);
-    }
-
-    private static async Task<ClipboardPayload?> ReadFrameAsync(NetworkStream stream)
-    {
-        var versionBuffer = new byte[1];
-        var bytesRead = await ReadExactlyAsync(stream, versionBuffer, 1);
-        if (bytesRead == 0)
-        {
-            return null;
-        }
-
-        var version = versionBuffer[0];
-        if (version != ProtocolVersion)
-        {
-            throw new InvalidOperationException($"Protocol version mismatch: received {version}, expected {ProtocolVersion}.");
-        }
-
-        var lengthBuffer = new byte[4];
-        var lengthRead = await ReadExactlyAsync(stream, lengthBuffer, 4);
-        if (lengthRead < 4)
-        {
-            return null;
-        }
-
-        var payloadLength = ((lengthBuffer[0] << 24) | (lengthBuffer[1] << 16) | (lengthBuffer[2] << 8) | lengthBuffer[3]);
-        var payloadBuffer = new byte[payloadLength];
-        var payloadRead = await ReadExactlyAsync(stream, payloadBuffer, payloadLength);
-        if (payloadRead < payloadLength)
-        {
-            return null;
-        }
-
-        var json = Encoding.UTF8.GetString(payloadBuffer);
-        return JsonSerializer.Deserialize<ClipboardPayload>(json);
-    }
-
-    private static async Task<int> ReadExactlyAsync(NetworkStream stream, byte[] buffer, int length)
-    {
-        var totalRead = 0;
-        while (totalRead < length)
-        {
-            var read = await stream.ReadAsync(buffer.AsMemory(totalRead, length - totalRead));
-            if (read == 0)
-            {
-                break;
-            }
-
-            totalRead += read;
-        }
-
-        return totalRead;
     }
 
     private void AppendStatus(string message)
     {
-        lock (_statusLock)
-        {
-            StatusChanged?.Invoke(this, message);
-        }
+        StatusChanged?.Invoke(this, message);
     }
 
     public void Dispose()

@@ -1,32 +1,13 @@
 using System.Diagnostics;
-using System.Net;
-using System.Text.RegularExpressions;
+using System.Text.Json;
 
 namespace ClipboardSyncApp.Core;
 
 public sealed class DiscoveryService
 {
-    private static readonly HashSet<string> ReservedWords = new(StringComparer.OrdinalIgnoreCase)
-    {
-        "peer",
-        "hostname",
-        "hostnames",
-        "tailscaleips",
-        "tailscale",
-        "ip",
-        "ips",
-        "status",
-        "json",
-        "data",
-        "node",
-        "nodes",
-        "name",
-        "type"
-    };
-
     public List<string> DiscoverPeerCandidates()
     {
-        var list = new List<string>();
+        var candidates = new List<string>();
 
         try
         {
@@ -49,15 +30,15 @@ public sealed class DiscoveryService
 
             if (process.ExitCode == 0 && !string.IsNullOrWhiteSpace(output))
             {
-                list.AddRange(ParseTailnetOutput(output));
+                candidates.AddRange(ParseTailnetOutput(output));
             }
         }
         catch
         {
-            // Gracefully ignore missing Tailscale CLI and fall back to no discovery.
+            // Tailscale CLI unavailable - return empty candidate list for manual entry fallback
         }
 
-        return list.Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+        return candidates.Distinct(StringComparer.OrdinalIgnoreCase).ToList();
     }
 
     public static List<string> ParseForTests(string json)
@@ -72,41 +53,77 @@ public sealed class DiscoveryService
             return Array.Empty<string>();
         }
 
-        var candidates = new List<string>();
-        var strings = Regex.Matches(json, "\"([^\"]+)\"")
-            .Select(match => match.Groups[1].Value.Trim())
-            .Where(value => !string.IsNullOrWhiteSpace(value));
+        var results = new List<string>();
+        var selfIps = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
-        foreach (var value in strings)
+        try
         {
-            if (IsCandidate(value))
+            using var doc = JsonDocument.Parse(json);
+            var root = doc.RootElement;
+
+            // 1. Extract Self node IPs to exclude local machine
+            if (root.TryGetProperty("Self", out var selfElement))
             {
-                candidates.Add(value);
+                ExtractIpsAndHostnames(selfElement, selfIps, null);
+            }
+
+            // 2. Extract Peer node IPs
+            if (root.TryGetProperty("Peer", out var peerElement))
+            {
+                if (peerElement.ValueKind == JsonValueKind.Object)
+                {
+                    foreach (var prop in peerElement.EnumerateObject())
+                    {
+                        ExtractIpsAndHostnames(prop.Value, results, selfIps);
+                    }
+                }
+                else if (peerElement.ValueKind == JsonValueKind.Array)
+                {
+                    foreach (var item in peerElement.EnumerateArray())
+                    {
+                        ExtractIpsAndHostnames(item, results, selfIps);
+                    }
+                }
+            }
+        }
+        catch
+        {
+            // Gracefully ignore parse errors
+        }
+
+        return results.Where(x => !selfIps.Contains(x)).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+    }
+
+    private static void ExtractIpsAndHostnames(JsonElement element, ICollection<string> destination, HashSet<string>? excludeSet)
+    {
+        // Skip offline nodes if Online property is false
+        if (element.TryGetProperty("Online", out var onlineElem) && onlineElem.ValueKind == JsonValueKind.False)
+        {
+            return;
+        }
+
+        if (element.TryGetProperty("HostName", out var hostElem) && hostElem.ValueKind == JsonValueKind.String)
+        {
+            var host = hostElem.GetString();
+            if (!string.IsNullOrWhiteSpace(host) && (excludeSet == null || !excludeSet.Contains(host)))
+            {
+                destination.Add(host);
             }
         }
 
-        return candidates.Distinct(StringComparer.OrdinalIgnoreCase).ToList();
-    }
-
-    private static bool IsCandidate(string value)
-    {
-        if (string.IsNullOrWhiteSpace(value) || ReservedWords.Contains(value))
+        if (element.TryGetProperty("TailscaleIPs", out var ipsElem) && ipsElem.ValueKind == JsonValueKind.Array)
         {
-            return false;
+            foreach (var ipElem in ipsElem.EnumerateArray())
+            {
+                if (ipElem.ValueKind == JsonValueKind.String)
+                {
+                    var ip = ipElem.GetString();
+                    if (!string.IsNullOrWhiteSpace(ip) && (excludeSet == null || !excludeSet.Contains(ip)))
+                    {
+                        destination.Add(ip);
+                    }
+                }
+            }
         }
-
-        if (IPAddress.TryParse(value, out _))
-        {
-            return true;
-        }
-
-        if (value.Contains('.') || value.Contains(':'))
-        {
-            return value.Count(ch => ch == '.') >= 1 || value.Count(ch => ch == ':') >= 1;
-        }
-
-        return value.Length >= 2
-            && value.Length <= 63
-            && Regex.IsMatch(value, "^[A-Za-z0-9-]+$");
     }
 }
